@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "sql-optim-env"
+version = "1.0.0"
+description = "OpenEnv-compliant RL environment for AI SQL query optimization agents."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+keywords = ["openenv", "sql", "database", "optimization", "rl", "reinforcement-learning", "llm-agent"]
+
+dependencies = [
+    "fastapi==0.115.0",
+    "uvicorn[standard]==0.30.6",
+    "pydantic==2.8.2",
+    "openai>=1.0.0",
+    "pyyaml==6.0.2",
+    "requests==2.32.3",
+    "openenv-core>=0.2.0",
+]
+
+[project.scripts]
+server = "server.app:main"
+
+[project.optional-dependencies]
+dev = ["pytest", "httpx"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
