@@ -1,0 +1,83 @@
+name: sql-optim-env
+version: "1.0.0"
+description: >
+  An OpenEnv-compliant reinforcement learning environment where AI agents
+  learn to analyze, diagnose, and optimize SQL queries. Agents identify
+  performance anti-patterns — from basic SELECT * issues to advanced
+  window function and correlated subquery problems — across three difficulty
+  levels and produce rewritten, optimized SQL.
+
+tags:
+  - openenv
+  - sql
+  - database
+  - performance
+  - optimization
+  - llm-agent
+
+language: python
+framework: openenv
+
+observation_space:
+  type: object
+  fields:
+    task_id: string
+    task_name: string
+    task_description: string
+    sql_query: string
+    schema_info: string
+    dialect: string
+    difficulty: string
+    step_count: integer
+    max_steps: integer
+    issues_found_so_far: array
+
+action_space:
+  type: object
+  fields:
+    suggestions: array
+    optimized_query: string
+    summary: string
+    estimated_improvement: string
+    approved: boolean
+
+reward:
+  type: float
+  min: 0.0
+  max: 1.0
+  description: >
+    Composite score: issue detection (60%), optimized query quality (15%),
+    approval correctness (10%), summary quality (8%),
+    improvement estimate (4%), severity labels (3%).
+
+tasks:
+  - id: task_1_basic_antipatterns
+    name: "Basic SQL Anti-pattern Detection"
+    difficulty: easy
+    max_steps: 3
+    description: "Identify SELECT *, non-SARGable predicates, and implicit type casts that prevent index usage."
+
+  - id: task_2_join_optimization
+    name: "N+1 Pattern & Join Optimization"
+    difficulty: medium
+    max_steps: 4
+    description: "Detect correlated subqueries, missing join indexes, and inefficient sorting in complex queries."
+
+  - id: task_3_advanced_optimization
+    name: "Advanced Query & Window Function Audit"
+    difficulty: hard
+    max_steps: 5
+    description: "Deep performance audit: JSONB index misses, CTE materialization, window function planning, lock contention, and implicit casts."
+
+endpoints:
+  reset: POST /reset
+  step: POST /step
+  state: GET /state
+  tasks: GET /tasks
+  grader: POST /grader
+  baseline: POST /baseline
+
+deployment:
+  platform: huggingface-spaces
+  port: 7860
+  dockerfile: Dockerfile
