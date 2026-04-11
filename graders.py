@@ -1,126 +1,176 @@
-from typing import Dict, Any, List
+"""
+graders.py — Execution-Grounded Reward Function
+=================================================
+What makes this environment unique: reward is computed from REAL
+DuckDB execution results, not just keyword heuristics.
+
+Scoring breakdown (sums to 1.0):
+  Real Execution Speedup    35%   — actual timing ratio from DuckDB
+  Result Correctness        20%   — both queries return identical data?
+  Issue Detection           25%   — keyword match vs ground truth
+  Approval Correctness       8%   — correctly flags query as bad?
+  Summary Quality            7%   — is the written analysis thorough?
+  Severity Labels            5%   — are severity values present?
+"""
+
+from typing import Any, Dict, List, Optional
+
+from executor import get_executor
 from models import Action, Reward
 
 
-def _keyword_match(text: str, keywords: List[str]) -> bool:
-    """Check if any keyword appears in text (case-insensitive)."""
-    text_lower = text.lower()
-    return any(kw.lower() in text_lower for kw in keywords)
+# ── Helpers ──────────────────────────────────────────────────────────────
+
+def _kw_match(text: str, keywords: List[str]) -> bool:
+    t = text.lower()
+    return any(kw.lower() in t for kw in keywords)
 
 
 def _suggestions_text(action: Action) -> str:
-    """Flatten all suggestion fields into one searchable string."""
     parts = [action.summary, action.optimized_query, action.estimated_improvement]
     for s in action.suggestions:
-        parts.append(str(s.get("issue_type", "")))
-        parts.append(str(s.get("description", "")))
-        parts.append(str(s.get("fix", "")))
-        parts.append(str(s.get("line", "")))
-        parts.append(str(s.get("severity", "")))
+        parts += [
+            str(s.get("issue_type", "")),
+            str(s.get("description", "")),
+            str(s.get("fix", "")),
+            str(s.get("severity", "")),
+        ]
     return " ".join(parts)
 
 
-def grade(task_data: Dict[str, Any], action: Action) -> Reward:
-    """
-    Grade an agent's SQL optimization action against ground truth issues.
+# ── Speedup → score mapping ───────────────────────────────────────────────
 
-    Scoring breakdown:
-      - Issue Detection:         60%  (did agent find the right problems?)
-      - Optimized Query Quality: 15%  (did agent provide a meaningful rewrite?)
-      - Approval Correctness:    10%  (correctly flagged as needing changes?)
-      - Summary Quality:          8%  (is the summary thorough and informative?)
-      - Improvement Estimate:     4%  (did agent quantify the expected gain?)
-      - Severity Labels:          3%  (are severity levels present?)
-    """
+def _speedup_score(speedup: float, has_error: bool) -> float:
+    """Map real speedup ratio to a score in [0.0, 0.35]."""
+    if has_error:
+        return 0.0
+    if speedup >= 15.0:
+        return 0.35
+    if speedup >= 8.0:
+        return 0.30
+    if speedup >= 4.0:
+        return 0.25
+    if speedup >= 2.0:
+        return 0.18
+    if speedup >= 1.2:
+        return 0.10
+    if speedup >= 0.9:          # slightly slower — acceptable
+        return 0.04
+    return 0.0                  # regression
+
+
+# ── Main grader ───────────────────────────────────────────────────────────
+
+def grade(task_data: Dict[str, Any], action: Action) -> Reward:
+    original_query: str = task_data["sql_query"]
+    optimized_query: str = (action.optimized_query or "").strip()
     ground_truth: List[Dict[str, Any]] = task_data["ground_truth_issues"]
     full_text = _suggestions_text(action)
 
-    # ── 1. Issue Detection Score (0.0–0.60) ────────────────────────────
+    # ── 1. Real Execution (0.0–0.35) ─────────────────────────────────
+    exec_info: Dict[str, Any] = {}
+    speedup_sc = 0.0
+    correctness_sc = 0.0
+    exec_feedback: List[str] = []
+
+    if optimized_query:
+        try:
+            ex = get_executor()
+            exec_info = ex.compare(original_query, optimized_query)
+            speedup    = exec_info.get("speedup", 1.0)
+            r_match    = exec_info.get("results_match", False)
+            opt_err    = exec_info.get("optimized_error")
+
+            # 1a. Speedup score
+            speedup_sc = _speedup_score(speedup, bool(opt_err))
+
+            # 1b. Correctness score (0.0-0.20)
+            if opt_err:
+                correctness_sc = 0.0
+            elif r_match:
+                correctness_sc = 0.20
+            elif exec_info.get("optimized_rows", 0) > 0:
+                # Query ran but different results -- partial credit
+                correctness_sc = 0.05
+
+            # Feedback lines
+            exec_feedback = [
+                "\n[DuckDB Execution Results]",
+                f"   Original  : {exec_info['original_ms']:.1f} ms "
+                f"({exec_info['original_rows']} rows)",
+                f"   Optimized : {exec_info['optimized_ms']:.1f} ms "
+                f"({exec_info['optimized_rows']} rows)",
+                f"   Speedup   : {speedup:.2f}x",
+                f"   Correct?  : {'YES' if r_match else 'NO -- results differ'}",
+                f"   Verdict   : {exec_info.get('verdict', '')}",
+            ]
+            if opt_err:
+                exec_feedback.append(f"   SQL Error : {opt_err[:200]}")
+
+        except Exception as exc:
+            exec_feedback = [f"\n[WARN] Execution engine error: {exc}"]
+
+    # ── 2. Issue Detection (0.0–0.25) ────────────────────────────────
     detected = 0
-    detection_feedback = []
-    for gt_issue in ground_truth:
-        found = _keyword_match(full_text, gt_issue["keywords"])
+    detection_fb: List[str] = ["\n[Issue Detection]"]
+    for gt in ground_truth:
+        found = _kw_match(full_text, gt["keywords"])
         if found:
             detected += 1
-            detection_feedback.append(f"✅ Found: {gt_issue['type']} (line ~{gt_issue['line']})")
+            detection_fb.append(f"   [FOUND] {gt['type']} (line ~{gt['line']})")
         else:
-            detection_feedback.append(f"❌ Missed: {gt_issue['type']} (line ~{gt_issue['line']})")
+            detection_fb.append(f"   [MISS ] {gt['type']} (line ~{gt['line']})")
+    detection_sc = (detected / len(ground_truth)) * 0.25 if ground_truth else 0.0
 
-    detection_score = (detected / len(ground_truth)) * 0.60
-
-    # ── 2. Optimized Query Quality (0.0–0.15) ──────────────────────────
-    query_score = 0.0
-    oq = action.optimized_query.strip()
-    if len(oq) > 50:
-        query_score = 0.05
-    if len(oq) > 150:
-        query_score = 0.10
-    # Bonus if the rewrite removes obvious anti-patterns found in original
-    original_query = task_data["sql_query"].lower()
-    if "select *" in original_query and "select *" not in oq.lower():
-        query_score = min(query_score + 0.03, 0.15)
-    if query_score < 0.15 and len(action.suggestions) > 0 and len(oq) > 100:
-        query_score = min(query_score + 0.02, 0.15)
-    query_score = min(query_score, 0.15)
-
-    # ── 3. Approval Correctness (0.0–0.10) ─────────────────────────────
+    # ── 3. Approval Correctness (0.0–0.08) ───────────────────────────
     expected_approved = task_data.get("approved_expected", False)
-    approval_score = 0.10 if action.approved == expected_approved else 0.0
+    approval_sc = 0.08 if action.approved == expected_approved else 0.0
 
-    # ── 4. Summary Quality (0.0–0.08) ──────────────────────────────────
-    summary_score = 0.0
-    if len(action.summary) > 40:
-        summary_score = 0.04
-    if len(action.summary) > 100:
-        summary_score = 0.08
+    # ── 4. Summary Quality (0.0–0.07) ────────────────────────────────
+    summary_sc = 0.0
+    slen = len(action.summary)
+    if slen > 50:
+        summary_sc = 0.03
+    if slen > 120:
+        summary_sc = 0.07
 
-    # ── 5. Improvement Estimate Present (0.0–0.04) ─────────────────────
-    improvement_keywords = ["x faster", "% less", "% faster", "% improvement", "times", "reduce", "improvement", "speedup"]
-    has_estimate = _keyword_match(action.estimated_improvement, improvement_keywords) and len(action.estimated_improvement) > 5
-    improvement_score = 0.04 if has_estimate else 0.0
-
-    # ── 6. Severity Labels Present (0.0–0.03) ──────────────────────────
-    severity_keywords = ["critical", "high", "medium", "low"]
-    has_severity = any(
-        _keyword_match(str(s.get("severity", "")), severity_keywords)
-        for s in action.suggestions
+    # ── 5. Severity Labels (0.0–0.05) ────────────────────────────────
+    sev_kw = ["critical", "high", "medium", "low"]
+    has_sev = any(
+        _kw_match(str(s.get("severity", "")), sev_kw) for s in action.suggestions
     )
-    severity_score = 0.03 if has_severity else 0.0
+    severity_sc = 0.05 if has_sev else 0.0
 
-    # ── Final Score ─────────────────────────────────────────────────────
-    total = (
-        detection_score + query_score + approval_score +
-        summary_score + improvement_score + severity_score
+    # ── Total ─────────────────────────────────────────────────────────
+    total = min(
+        max(speedup_sc + correctness_sc + detection_sc +
+            approval_sc + summary_sc + severity_sc, 0.0),
+        1.0,
     )
-    total = round(min(max(total, 0.0), 1.0), 4)
-
-    # Minimum signal for any submission
-    if total == 0.0 and len(action.suggestions) > 0:
-        total = 0.02
+    total = round(total, 4)
+    if total == 0.0 and action.suggestions:
+        total = 0.02          # minimum signal for any submission
 
     breakdown = {
-        "issue_detection":       round(detection_score, 4),
-        "optimized_query":       round(query_score, 4),
-        "approval_correctness":  round(approval_score, 4),
-        "summary_quality":       round(summary_score, 4),
-        "improvement_estimate":  round(improvement_score, 4),
-        "severity_labels":       round(severity_score, 4),
+        "execution_speedup":    round(speedup_sc, 4),
+        "result_correctness":   round(correctness_sc, 4),
+        "issue_detection":      round(detection_sc, 4),
+        "approval_correctness": round(approval_sc, 4),
+        "summary_quality":      round(summary_sc, 4),
+        "severity_labels":      round(severity_sc, 4),
     }
 
-    n_suggestions = len(action.suggestions)
-    expected_n = len(ground_truth)
-
-    feedback_lines = detection_feedback + [
-        f"\nSuggestions submitted: {n_suggestions} (expected ~{expected_n})",
-        f"Optimized query length: {len(oq)} chars",
-        f"Approval correctness: {'✅' if action.approved == expected_approved else '❌'} "
-        f"(you said {'approved' if action.approved else 'needs changes'}, "
-        f"expected {'approved' if expected_approved else 'needs changes'})",
-        f"Total score: {total:.4f}",
-    ]
-
-    return Reward(
-        score=total,
-        breakdown=breakdown,
-        feedback="\n".join(feedback_lines)
+    feedback = "\n".join(
+        exec_feedback
+        + detection_fb
+        + [
+            f"\n   Suggestions submitted: {len(action.suggestions)} "
+            f"(expected ~{len(ground_truth)})",
+            f"   Approval: {'✅' if action.approved == expected_approved else '❌'} "
+            f"(got {'approved' if action.approved else 'rejected'}, "
+            f"expected {'approved' if expected_approved else 'rejected'})",
+            f"\n🏆 Total score: {total:.4f}",
+        ]
     )
+
+    return Reward(score=total, breakdown=breakdown, feedback=feedback)

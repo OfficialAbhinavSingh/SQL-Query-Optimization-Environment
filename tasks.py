@@ -1,216 +1,396 @@
-from typing import Dict, Any, List
+"""
+tasks.py — SQL Query Optimization Tasks
+========================================
+Five tasks of increasing difficulty, each with a DuckDB-executable
+"bad" query (stored in sql_query) that agents must analyze and rewrite.
+
+All queries run against the executor's synthetic tables:
+  users    (10,000 rows)  — id, email, tier, region, plan, created_at
+  orders   (500,000 rows) — id, customer_id, product_id, status, total, created_at
+  products (1,000 rows)   — id, name, category, price
+  events   (1,000,000 rows) — id, user_id, session_id, event_type, occurred_at
+"""
+
+from typing import Any, Dict, List
 
 TASKS: Dict[str, Dict[str, Any]] = {
 
-    # ──────────────────────────────────────────────────────────────────
-    # TASK 1 — EASY: Basic Query Anti-pattern Detection
-    # ──────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────
+    # TASK 1 — EASY: Basic Anti-pattern Detection
+    # ─────────────────────────────────────────────────────────────────
     "task_1_basic_antipatterns": {
-        "task_id": "task_1_basic_antipatterns",
+        "task_id":   "task_1_basic_antipatterns",
         "task_name": "Basic SQL Anti-pattern Detection",
         "task_description": (
-            "Analyze the SQL query below for common anti-patterns that hurt performance. "
-            "Identify issues such as: SELECT *, missing WHERE clauses causing full table scans, "
-            "implicit type conversions, and non-SARGable predicates that prevent index usage. "
-            "For each issue, report: issue_type, line number, description, severity (critical|high|medium|low), and a suggested fix."
+            "Analyze the SQL query below for common anti-patterns that destroy performance. "
+            "Identify: SELECT * (fetches unnecessary columns from 500k rows), "
+            "CAST on a filter column (prevents any index or min/max pruning), "
+            "and a function applied to a date column (forces full table evaluation). "
+            "For each issue report: issue_type, line, description, severity, and a concrete fix. "
+            "Also provide a fully rewritten optimized_query — it will be EXECUTED against "
+            "real data and your speedup will be measured."
         ),
         "difficulty": "easy",
-        "dialect": "postgresql",
+        "dialect":   "duckdb/postgresql",
         "max_steps": 3,
-        "schema_info": """\
-Table: orders (id SERIAL PK, customer_id INT FK, status VARCHAR(20), total DECIMAL(10,2), created_at TIMESTAMPTZ)
-Index: idx_orders_customer_id ON orders(customer_id)
-Index: idx_orders_created_at ON orders(created_at)
-Table size: ~5 million rows
-""",
-        "sql_query": """\
--- Fetch recent orders for reporting dashboard
-SELECT *
-FROM orders
-WHERE CAST(customer_id AS TEXT) = '12345'
-  AND YEAR(created_at) = 2024;
-""",
+        "schema_info": (
+            "Table: orders (500,000 rows)\n"
+            "  id INT, customer_id INT, product_id INT,\n"
+            "  status VARCHAR, total DECIMAL, created_at DATE\n\n"
+            "No indexes defined (DuckDB uses columnar min/max pruning when columns "
+            "are not wrapped in functions).\n"
+            "Scan cost: ~500k rows × all columns with SELECT *"
+        ),
+        "sql_query": (
+            "SELECT *\n"
+            "FROM orders\n"
+            "WHERE CAST(customer_id AS VARCHAR) = '5000'\n"
+            "  AND year(created_at) = 2024;"
+        ),
         "ground_truth_issues": [
             {
                 "type": "select_star",
-                "line": 2,
-                "keywords": ["select *", "select star", "all columns", "specific columns", "unnecessary columns", "bandwidth"]
+                "line": 1,
+                "keywords": [
+                    "select *", "star", "all columns", "unnecessary columns",
+                    "column projection", "specify columns", "bandwidth",
+                ],
             },
             {
-                "type": "non_sargable_predicate",
+                "type": "non_sargable_cast",
+                "line": 3,
+                "keywords": [
+                    "cast", "varchar", "type cast", "type conversion",
+                    "non-sargable", "sargable", "integer comparison",
+                    "string comparison", "prevents", "pruning",
+                ],
+            },
+            {
+                "type": "function_on_date_column",
                 "line": 4,
-                "keywords": ["cast", "convert", "non-sargable", "sargable", "index", "function on column", "type conversion", "implicit"]
-            },
-            {
-                "type": "non_sargable_predicate",
-                "line": 5,
-                "keywords": ["year(", "function on column", "non-sargable", "index", "date range", "between", "extract"]
+                "keywords": [
+                    "year(", "function on column", "non-sargable", "date range",
+                    "between", "extract", "full scan", "date filter",
+                ],
             },
         ],
         "approved_expected": False,
     },
 
-    # ──────────────────────────────────────────────────────────────────
-    # TASK 2 — MEDIUM: N+1 Query and Join Optimization
-    # ──────────────────────────────────────────────────────────────────
-    "task_2_join_optimization": {
-        "task_id": "task_2_join_optimization",
-        "task_name": "N+1 Pattern & Join Optimization",
+    # ─────────────────────────────────────────────────────────────────
+    # TASK 2 — MEDIUM: N+1 Correlated Subqueries
+    # ─────────────────────────────────────────────────────────────────
+    "task_2_correlated_subqueries": {
+        "task_id":   "task_2_correlated_subqueries",
+        "task_name": "N+1 Correlated Subquery Elimination",
         "task_description": (
-            "Review the SQL query below for join performance issues and N+1 query patterns. "
-            "Identify: missing indexes on join columns, inefficient subquery patterns that could be CTEs or JOINs, "
-            "correlated subqueries executing per-row, missing covering indexes, and cartesian join risks. "
-            "For each issue, report issue_type, line, description, severity, and a specific fix."
+            "The query below uses three correlated scalar subqueries — each one scans "
+            "the entire orders table (500k rows) once per premium user (~3,300 users). "
+            "That's ~10 million row reads just for aggregation. "
+            "Identify the N+1 pattern, explain why each subquery is harmful, "
+            "and rewrite the query as a single aggregation JOIN. "
+            "Your optimized_query will be executed; results must match the original."
         ),
         "difficulty": "medium",
-        "dialect": "postgresql",
+        "dialect":   "duckdb/postgresql",
         "max_steps": 4,
-        "schema_info": """\
-Table: users (id SERIAL PK, email VARCHAR UNIQUE, tier VARCHAR(10), region VARCHAR(50), created_at TIMESTAMPTZ)
-Table: orders (id SERIAL PK, user_id INT FK->users.id, product_id INT FK->products.id, amount DECIMAL, placed_at TIMESTAMPTZ, status VARCHAR(20))
-Table: products (id SERIAL PK, name VARCHAR, category VARCHAR(50), price DECIMAL)
-Table: order_items (id SERIAL PK, order_id INT FK->orders.id, product_id INT FK->products.id, qty INT, unit_price DECIMAL)
-Indexes: users(id) PK, orders(user_id), products(id) PK
-No index on: orders(product_id), orders(status), order_items(order_id)
-Approximate sizes: users=500k rows, orders=10M rows, order_items=40M rows, products=50k rows
-""",
-        "sql_query": """\
-SELECT
-    u.email,
-    u.tier,
-    (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS order_count,
-    (SELECT SUM(o.amount) FROM orders o WHERE o.user_id = u.id AND o.status = 'completed') AS total_spent,
-    (SELECT MAX(o.placed_at) FROM orders o WHERE o.user_id = u.id) AS last_order_date
-FROM users u
-WHERE u.region = 'US'
-  AND u.created_at > '2023-01-01'
-ORDER BY total_spent DESC
-LIMIT 100;
-""",
+        "schema_info": (
+            "Table: users (10,000 rows)\n"
+            "  id INT, email VARCHAR, tier VARCHAR, region VARCHAR,\n"
+            "  plan VARCHAR, created_at DATE\n\n"
+            "Table: orders (500,000 rows)\n"
+            "  id INT, customer_id INT, product_id INT,\n"
+            "  status VARCHAR, total DECIMAL, created_at DATE\n\n"
+            "Premium users: ~3,300  |  Orders per user avg: 50\n"
+            "Worst-case scans: 3 subqueries × 3,300 users × 500k rows = ~5B row reads"
+        ),
+        "sql_query": (
+            "SELECT\n"
+            "    u.email,\n"
+            "    u.region,\n"
+            "    (SELECT COUNT(*)\n"
+            "     FROM orders o\n"
+            "     WHERE o.customer_id = u.id AND o.status = 'completed') AS completed_orders,\n"
+            "    (SELECT SUM(o.total)\n"
+            "     FROM orders o\n"
+            "     WHERE o.customer_id = u.id\n"
+            "       AND o.created_at >= DATE '2024-01-01') AS ytd_spend,\n"
+            "    (SELECT total\n"
+            "     FROM orders o\n"
+            "     WHERE o.customer_id = u.id\n"
+            "     ORDER BY created_at DESC LIMIT 1) AS last_order_amount\n"
+            "FROM users u\n"
+            "WHERE u.tier = 'premium';"
+        ),
         "ground_truth_issues": [
             {
-                "type": "correlated_subquery",
+                "type": "correlated_subquery_count",
                 "line": 4,
-                "keywords": ["correlated", "subquery", "per row", "n+1", "repeated", "each user", "lateral", "join"]
+                "keywords": [
+                    "correlated", "subquery", "per row", "n+1", "each user",
+                    "repeated scan", "join", "aggregation",
+                ],
             },
             {
-                "type": "correlated_subquery",
-                "line": 5,
-                "keywords": ["correlated", "subquery", "per row", "n+1", "repeated", "each user", "lateral", "join"]
+                "type": "correlated_subquery_sum",
+                "line": 7,
+                "keywords": [
+                    "correlated", "subquery", "per row", "n+1", "each user",
+                    "repeated scan", "join", "group by",
+                ],
             },
             {
-                "type": "correlated_subquery",
-                "line": 6,
-                "keywords": ["correlated", "subquery", "per row", "n+1", "repeated", "each user", "lateral", "join"]
+                "type": "correlated_subquery_limit",
+                "line": 11,
+                "keywords": [
+                    "correlated", "subquery", "limit 1", "order by", "lateral",
+                    "row_number", "rank", "window function", "per row",
+                ],
             },
             {
-                "type": "missing_index",
-                "line": 8,
-                "keywords": ["missing index", "no index", "region", "full scan", "index on region", "composite"]
-            },
-            {
-                "type": "sort_without_index",
-                "line": 10,
-                "keywords": ["order by", "sort", "filesort", "index", "total_spent", "computed", "no index for sort"]
+                "type": "missing_aggregation_join",
+                "line": 16,
+                "keywords": [
+                    "left join", "group by", "aggreg", "single pass",
+                    "coalesce", "join aggregat",
+                ],
             },
         ],
         "approved_expected": False,
     },
 
-    # ──────────────────────────────────────────────────────────────────
-    # TASK 3 — HARD: Complex Aggregation & Window Function Audit
-    # ──────────────────────────────────────────────────────────────────
-    "task_3_advanced_optimization": {
-        "task_id": "task_3_advanced_optimization",
-        "task_name": "Advanced Query & Window Function Audit",
+    # ─────────────────────────────────────────────────────────────────
+    # TASK 3 — MEDIUM-HARD: Wildcard LIKE Full Scan
+    # ─────────────────────────────────────────────────────────────────
+    "task_3_wildcard_scan": {
+        "task_id":   "task_3_wildcard_scan",
+        "task_name": "Wildcard LIKE & Projection Optimization",
         "task_description": (
-            "Perform a deep performance audit of the complex analytical SQL query below. "
-            "Identify: missing partition/covering indexes for window functions, "
-            "inefficient GROUP BY with HAVING that could be pre-filtered, "
-            "implicit data type coercions preventing index usage, "
-            "redundant subqueries or CTEs that materialize too early, "
-            "missing query hints or planner directives, "
-            "and lock contention risks from large aggregations on live tables. "
-            "For each issue report: issue_type, line, severity (critical|high|medium|low), description, and a concrete fix."
+            "The query scans all 1,000,000 events rows with leading and trailing wildcard "
+            "LIKE patterns — these disable min/max pruning and force full column evaluation. "
+            "It also computes derived columns for every row before filtering. "
+            "Identify: leading-wildcard LIKE patterns that kill pruning, "
+            "SELECT * on a million-row table, redundant OR conditions, "
+            "and unnecessary computed columns evaluated before WHERE filtering. "
+            "Rewrite to use exact equality and minimal column projection."
         ),
-        "difficulty": "hard",
-        "dialect": "postgresql",
-        "max_steps": 5,
-        "schema_info": """\
-Table: events (id BIGSERIAL PK, user_id INT, session_id UUID, event_type VARCHAR(50), properties JSONB, occurred_at TIMESTAMPTZ)
-Table: sessions (id UUID PK, user_id INT, started_at TIMESTAMPTZ, ended_at TIMESTAMPTZ, device VARCHAR(30))
-Table: users (id INT PK, plan VARCHAR(20), country VARCHAR(3), created_at DATE)
-Indexes: events(user_id, occurred_at), events(session_id), sessions(user_id)
-No index on: events(event_type), events(occurred_at) standalone, users(plan, country)
-Table sizes: events=500M rows, sessions=50M rows, users=2M rows
-Autovacuum lag: events table has ~10% dead tuples
-""",
-        "sql_query": """\
-WITH user_sessions AS (
-    SELECT
-        e.user_id,
-        e.session_id,
-        COUNT(*) AS event_count,
-        SUM(CASE WHEN e.event_type = 'purchase' THEN 1 ELSE 0 END) AS purchases,
-        MIN(e.occurred_at) AS session_start,
-        MAX(e.occurred_at) AS session_end
-    FROM events e
-    JOIN sessions s ON s.id = e.session_id
-    WHERE e.occurred_at BETWEEN '2024-01-01' AND '2024-12-31'
-      AND properties->>'plan' = 'premium'
-    GROUP BY e.user_id, e.session_id
-),
-ranked_sessions AS (
-    SELECT
-        *,
-        ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY purchases DESC, session_end DESC) AS rn,
-        AVG(event_count) OVER (PARTITION BY user_id) AS avg_events_per_session
-    FROM user_sessions
-)
-SELECT
-    u.country,
-    u.plan,
-    AVG(rs.purchases) AS avg_purchases,
-    COUNT(DISTINCT rs.user_id) AS active_users,
-    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY rs.event_count) AS median_events
-FROM ranked_sessions rs
-JOIN users u ON u.id = rs.user_id
-WHERE rs.rn = 1
-  AND u.plan::text IN ('premium', 'enterprise')
-GROUP BY u.country, u.plan
-HAVING COUNT(DISTINCT rs.user_id) > 10
-ORDER BY avg_purchases DESC;
-""",
+        "difficulty": "medium-hard",
+        "dialect":   "duckdb/postgresql",
+        "max_steps": 4,
+        "schema_info": (
+            "Table: events (1,000,000 rows)\n"
+            "  id INT, user_id INT, session_id VARCHAR,\n"
+            "  event_type VARCHAR, occurred_at DATE\n\n"
+            "Distinct event_type values: purchase, view, click, signup, logout, search\n"
+            "Wildcard LIKE on all 1M rows: forces full column scan\n"
+            "Exact equality match: enables columnar zone-map pruning"
+        ),
+        "sql_query": (
+            "SELECT\n"
+            "    *,\n"
+            "    CAST(id AS VARCHAR) || '_' || event_type  AS event_key,\n"
+            "    upper(event_type)                          AS event_type_upper\n"
+            "FROM events\n"
+            "WHERE event_type LIKE '%purchase%'\n"
+            "   OR event_type LIKE '%buy%'\n"
+            "   OR session_id LIKE 'sess_%';"
+        ),
         "ground_truth_issues": [
             {
-                "type": "json_extraction_kills_index",
-                "line": 10,
-                "keywords": ["jsonb", "properties->", "arrow", "json", "index", "expression index", "gin", "no index", "json field"]
+                "type": "leading_wildcard_like",
+                "line": 6,
+                "keywords": [
+                    "leading wildcard", "like '%", "full scan", "exact match",
+                    "equality", "pruning disabled", "wildcard", "zone map",
+                ],
             },
             {
-                "type": "redundant_cte_materialization",
-                "line": 1,
-                "keywords": ["cte", "materialize", "materialized", "inline", "common table expression", "scan twice", "performance"]
+                "type": "or_expands_to_full_scan",
+                "line": 7,
+                "keywords": [
+                    "or condition", "union", "separate queries", "or expands",
+                    "full scan", "like '%buy%'", "redundant",
+                ],
             },
             {
-                "type": "window_function_missing_index",
-                "line": 16,
-                "keywords": ["row_number", "window", "partition", "index", "sort", "covering index", "partition by user_id"]
+                "type": "select_star_large_table",
+                "line": 2,
+                "keywords": [
+                    "select *", "1 million", "all columns", "projection",
+                    "column pruning", "unnecessary", "bandwidth",
+                ],
             },
             {
-                "type": "implicit_cast_prevents_index",
-                "line": 28,
-                "keywords": ["cast", "::text", "implicit", "coerce", "index", "type cast", "data type", "prevent"]
+                "type": "pre_filter_computed_columns",
+                "line": 3,
+                "keywords": [
+                    "computed column", "derived", "upper(", "cast(", "concatenat",
+                    "before filter", "pre-filter", "push down", "CTE",
+                ],
             },
+        ],
+        "approved_expected": False,
+    },
+
+    # ─────────────────────────────────────────────────────────────────
+    # TASK 4 — HARD: Implicit Cross Join + Repeated Scalar Subqueries
+    # ─────────────────────────────────────────────────────────────────
+    "task_4_implicit_join": {
+        "task_id":   "task_4_implicit_join",
+        "task_name": "Implicit Cross Join & Scalar Subquery Elimination",
+        "task_description": (
+            "This query uses comma-separated FROM (implicit cross join syntax) and "
+            "two correlated scalar subqueries that re-aggregate the entire orders table "
+            "once per GROUP BY group. "
+            "Identify: implicit cross join risk (comma in FROM clause), "
+            "two correlated scalar subqueries recalculating global stats, "
+            "and the GROUP BY without an explicit JOIN. "
+            "Rewrite using explicit INNER JOIN and a CTE/subquery for the global stats "
+            "so they are computed exactly once."
+        ),
+        "difficulty": "hard",
+        "dialect":   "duckdb/postgresql",
+        "max_steps": 5,
+        "schema_info": (
+            "Table: users (10,000 rows)  — id, email, tier, region, plan, created_at\n"
+            "Table: orders (500,000 rows) — id, customer_id, product_id, status, total, created_at\n\n"
+            "Join: users.id = orders.customer_id\n"
+            "Implicit join (comma syntax) risk: if WHERE predicate is missing,\n"
+            "produces a Cartesian product of 10k × 500k = 5 BILLION rows.\n"
+            "Scalar subqueries: each recalculates over all 500k orders per group."
+        ),
+        "sql_query": (
+            "SELECT\n"
+            "    u.region,\n"
+            "    u.plan,\n"
+            "    COUNT(*)      AS total_orders,\n"
+            "    SUM(o.total)  AS revenue,\n"
+            "    (SELECT AVG(total) FROM orders)                                    AS global_avg,\n"
+            "    (SELECT MAX(total) FROM orders WHERE status = 'completed')         AS max_deal\n"
+            "FROM users u, orders o\n"
+            "WHERE u.id = o.customer_id\n"
+            "  AND o.status IN ('completed', 'shipped')\n"
+            "GROUP BY u.region, u.plan;"
+        ),
+        "ground_truth_issues": [
             {
-                "type": "vacuum_bloat_risk",
+                "type": "implicit_cross_join",
                 "line": 8,
-                "keywords": ["vacuum", "dead tuple", "bloat", "autovacuum", "table bloat", "live rows", "500M", "performance"]
+                "keywords": [
+                    "implicit", "cross join", "comma join", "explicit join",
+                    "inner join", "cartesian", "comma in from",
+                ],
             },
             {
-                "type": "having_without_pre_filter",
-                "line": 30,
-                "keywords": ["having", "group by", "pre-filter", "where", "filter before", "aggregate", "subquery push"]
+                "type": "repeated_scalar_subquery_avg",
+                "line": 6,
+                "keywords": [
+                    "scalar subquery", "correlated", "per group", "once per row",
+                    "cte", "with clause", "pre-compute", "global avg",
+                ],
+            },
+            {
+                "type": "repeated_scalar_subquery_max",
+                "line": 7,
+                "keywords": [
+                    "scalar subquery", "correlated", "per group", "max deal",
+                    "cte", "pre-compute", "compute once", "constant",
+                ],
+            },
+            {
+                "type": "missing_explicit_join",
+                "line": 8,
+                "keywords": [
+                    "inner join", "explicit", "on clause", "join condition",
+                    "readable", "maintainable", "ansi sql",
+                ],
+            },
+        ],
+        "approved_expected": False,
+    },
+
+    # ─────────────────────────────────────────────────────────────────
+    # TASK 5 — EXPERT: Window Function Over Entire 1M-Row Table
+    # ─────────────────────────────────────────────────────────────────
+    "task_5_window_functions": {
+        "task_id":   "task_5_window_functions",
+        "task_name": "Window Function & Full-Scan Audit",
+        "task_description": (
+            "Five window functions are computed over ALL 1,000,000 events rows with no "
+            "pre-filtering. Each OVER() clause requires a full sort or hash-aggregate pass. "
+            "The global RANK() OVER (ORDER BY occurred_at) requires sorting the entire "
+            "table — the most expensive operation here. "
+            "Identify: no WHERE clause causing full 1M-row scans, "
+            "redundant window functions that can be merged, "
+            "a global ordering window function with no PARTITION, "
+            "and SELECT * on the full events table. "
+            "Rewrite to filter first, merge windows, and remove the global RANK."
+        ),
+        "difficulty": "expert",
+        "dialect":   "duckdb/postgresql",
+        "max_steps": 5,
+        "schema_info": (
+            "Table: events (1,000,000 rows)\n"
+            "  id INT, user_id INT, session_id VARCHAR,\n"
+            "  event_type VARCHAR, occurred_at DATE\n\n"
+            "Window function cost: each OVER() = full sort/hash pass over 1M rows\n"
+            "5 window functions = 5 full passes before any filtering\n"
+            "Global RANK(): sorts all 1M rows globally — most expensive operation\n"
+            "Filtering to 'purchase' events first reduces dataset to ~167k rows (1/6)"
+        ),
+        "sql_query": (
+            "SELECT\n"
+            "    user_id,\n"
+            "    event_type,\n"
+            "    occurred_at,\n"
+            "    COUNT(*) OVER (PARTITION BY user_id)                                AS total_user_events,\n"
+            "    COUNT(*) OVER (PARTITION BY user_id, event_type)                   AS type_count,\n"
+            "    ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY occurred_at DESC) AS recency_rank,\n"
+            "    RANK() OVER (ORDER BY occurred_at DESC)                            AS global_rank,\n"
+            "    SUM(CASE WHEN event_type = 'purchase' THEN 1 ELSE 0 END)\n"
+            "        OVER (PARTITION BY user_id)                                    AS user_purchases\n"
+            "FROM events;"
+        ),
+        "ground_truth_issues": [
+            {
+                "type": "no_pre_filter",
+                "line": 11,
+                "keywords": [
+                    "no where", "no filter", "full table", "1 million", "all rows",
+                    "pre-filter", "filter first", "cte", "with clause",
+                ],
+            },
+            {
+                "type": "global_rank_no_partition",
+                "line": 8,
+                "keywords": [
+                    "rank() over", "global rank", "no partition", "entire table",
+                    "full sort", "expensive", "global ordering", "remove",
+                ],
+            },
+            {
+                "type": "redundant_window_functions",
+                "line": 5,
+                "keywords": [
+                    "5 window", "multiple over", "redundant", "merge", "combine",
+                    "single pass", "same partition", "consolidate",
+                ],
+            },
+            {
+                "type": "count_vs_conditional_sum",
+                "line": 9,
+                "keywords": [
+                    "case when", "sum case", "count filter", "filter clause",
+                    "count(*) filter", "simpler", "merge with",
+                ],
+            },
+            {
+                "type": "select_all_unfiltered",
+                "line": 1,
+                "keywords": [
+                    "select *", "user_id, event_type", "projection", "column pruning",
+                    "select specific", "1 million rows", "bandwidth",
+                ],
             },
         ],
         "approved_expected": False,
@@ -218,20 +398,21 @@ ORDER BY avg_purchases DESC;
 }
 
 
-def get_task_list() -> List[Dict[str, Any]]:
+def get_task_list():
     return [
         {
-            "task_id": t["task_id"],
-            "task_name": t["task_name"],
+            "task_id":    t["task_id"],
+            "task_name":  t["task_name"],
             "difficulty": t["difficulty"],
+            "max_steps":  t["max_steps"],
             "description": t["task_description"],
             "action_schema": {
-                "suggestions": "List of {issue_type: str, line: int, description: str, severity: str, fix: str}",
-                "optimized_query": "str — rewritten SQL query with improvements",
-                "summary": "str — overall analysis summary",
-                "estimated_improvement": "str — expected performance gain",
-                "approved": "bool — whether query is already optimal (True) or not (False)"
-            }
+                "suggestions":          "List of {issue_type, line, description, severity, fix}",
+                "optimized_query":      "str — complete rewritten SQL (will be EXECUTED for real timing)",
+                "summary":              "str — overall performance analysis",
+                "estimated_improvement": "str — expected speedup (e.g. '10x faster')",
+                "approved":             "bool — True if already optimal",
+            },
         }
         for t in TASKS.values()
     ]

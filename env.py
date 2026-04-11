@@ -1,88 +1,132 @@
-from typing import Optional
-from models import Observation, Action, Reward, StepResult, EnvironmentState
-from tasks import TASKS
+"""
+env.py — SQLOptimEnv: Core OpenEnv Environment Class
+"""
+
+from typing import Any, Dict, Optional
+
+from executor import get_executor
 from graders import grade
+from leaderboard import record as lb_record
+from models import (
+    Action,
+    EnvironmentState,
+    Observation,
+    Reward,
+    StepResult,
+)
+from tasks import TASKS
 
 
 class SQLOptimEnv:
     """
     OpenEnv-compliant environment for SQL Query Optimization.
 
-    An AI agent iteratively analyzes a SQL query, identifies performance issues,
-    and submits optimized rewrites. The environment grades each action and tracks
-    progress across multiple steps within an episode.
+    The agent receives a SQL query + schema context, emits an Action
+    containing a list of optimization suggestions AND a rewritten
+    optimized_query.  The environment executes both queries against
+    real DuckDB data, measures the actual speedup, and checks
+    result correctness — all fed into the reward function.
+
+    Multi-step:
+      • issues_found_so_far accumulates flagged issue types.
+      • last_execution carries execution metrics back to the agent
+        so it can refine the optimized_query in subsequent steps.
     """
 
-    def __init__(self):
-        self._task_data: Optional[dict] = None
+    def __init__(self) -> None:
+        self._task_data: Optional[Dict[str, Any]] = None
         self._step_count: int = 0
         self._done: bool = False
         self._cumulative_reward: float = 0.0
         self._issues_found: list = []
+        self._last_execution: Optional[Dict[str, Any]] = None
 
-    def reset(self, task_id: str = "task_1_basic_antipatterns") -> Observation:
-        """Start a new episode for the given task."""
+    # ── OpenEnv interface ─────────────────────────────────────────────
+
+    def reset(
+        self, task_id: str = "task_1_basic_antipatterns"
+    ) -> Observation:
         if task_id not in TASKS:
             raise ValueError(
                 f"Unknown task_id '{task_id}'. "
-                f"Valid tasks: {list(TASKS.keys())}"
+                f"Valid: {list(TASKS.keys())}"
             )
         self._task_data = TASKS[task_id]
         self._step_count = 0
         self._done = False
         self._cumulative_reward = 0.0
         self._issues_found = []
-
-        return self._make_observation()
+        self._last_execution = None
+        return self._make_obs()
 
     def step(self, action: Action) -> StepResult:
-        """Process one agent action and return (observation, reward, done, info)."""
         if self._task_data is None:
-            raise RuntimeError("Episode not started. Call reset() first.")
+            raise RuntimeError("No active episode — call reset() first.")
         if self._done:
-            raise RuntimeError("Episode already finished. Call reset() to start a new episode.")
+            raise RuntimeError("Episode finished — call reset() to start a new one.")
 
         self._step_count += 1
 
-        # Grade the action
+        # Grade (runs DuckDB internally)
         reward: Reward = grade(self._task_data, action)
         self._cumulative_reward += reward.score
 
-        # Track issue types found so far
+        # Extract execution info from grader feedback for next obs
+        opt_q = (action.optimized_query or "").strip()
+        if opt_q:
+            try:
+                ex = get_executor()
+                self._last_execution = ex.compare(
+                    self._task_data["sql_query"], opt_q
+                )
+            except Exception:
+                self._last_execution = None
+
+        # Track issue types for progressive context
         for s in action.suggestions:
-            issue_type = s.get("issue_type", "")
-            if issue_type and issue_type not in self._issues_found:
-                self._issues_found.append(issue_type)
+            itype = s.get("issue_type", "")
+            if itype and itype not in self._issues_found:
+                self._issues_found.append(itype)
 
-        # Episode ends when max_steps reached OR agent finds a perfect score
-        max_steps = self._task_data["max_steps"]
+        max_steps: int = self._task_data["max_steps"]
         done = self._step_count >= max_steps or reward.score >= 0.95
-
         self._done = done
 
-        obs = self._make_observation()
+        # Update leaderboard
+        speedup = (
+            self._last_execution.get("speedup", 1.0)
+            if self._last_execution else 1.0
+        )
+        results_match = (
+            self._last_execution.get("results_match", False)
+            if self._last_execution else False
+        )
+        lb_record(
+            task_id=self._task_data["task_id"],
+            speedup=speedup,
+            score=reward.score,
+            results_match=results_match,
+            steps=self._step_count,
+        )
 
         return StepResult(
-            observation=obs,
+            observation=self._make_obs(),
             reward=reward,
             done=done,
             info={
-                "step": self._step_count,
+                "step":              self._step_count,
                 "cumulative_reward": round(self._cumulative_reward, 4),
-                "issues_found_count": len(self._issues_found),
-            }
+                "issues_found":      len(self._issues_found),
+                "execution":         self._last_execution,
+            },
         )
 
     def state(self) -> EnvironmentState:
-        """Return current environment state (for /state endpoint)."""
         if self._task_data is None:
             return EnvironmentState(
-                task_id="none",
-                step_count=0,
-                max_steps=0,
-                episode_done=True,
-                cumulative_reward=0.0,
-                current_task="No active episode"
+                task_id="none", step_count=0, max_steps=0,
+                episode_done=True, cumulative_reward=0.0,
+                current_task="No active episode",
             )
         return EnvironmentState(
             task_id=self._task_data["task_id"],
@@ -93,7 +137,9 @@ class SQLOptimEnv:
             current_task=self._task_data["task_name"],
         )
 
-    def _make_observation(self) -> Observation:
+    # ── Internal ──────────────────────────────────────────────────────
+
+    def _make_obs(self) -> Observation:
         d = self._task_data
         return Observation(
             task_id=d["task_id"],
@@ -101,9 +147,10 @@ class SQLOptimEnv:
             task_description=d["task_description"],
             sql_query=d["sql_query"],
             schema_info=d["schema_info"],
-            dialect=d.get("dialect", "postgresql"),
+            dialect=d.get("dialect", "duckdb/postgresql"),
             difficulty=d["difficulty"],
             step_count=self._step_count,
             max_steps=d["max_steps"],
             issues_found_so_far=list(self._issues_found),
+            last_execution=self._last_execution,
         )

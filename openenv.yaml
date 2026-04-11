@@ -1,11 +1,13 @@
 name: sql-optim-env
-version: "1.0.0"
+version: "2.0.0"
 description: >
   An OpenEnv-compliant reinforcement learning environment where AI agents
-  learn to analyze, diagnose, and optimize SQL queries. Agents identify
-  performance anti-patterns — from basic SELECT * issues to advanced
-  window function and correlated subquery problems — across three difficulty
-  levels and produce rewritten, optimized SQL.
+  learn to diagnose and optimize SQL queries. Unlike any other submission,
+  optimized queries are ACTUALLY EXECUTED against a DuckDB in-memory
+  database with realistic synthetic data (500k orders, 1M events).
+  Reward is computed from real execution speedup + result correctness —
+  not keyword heuristics. Five tasks from easy anti-patterns to expert
+  window function audits.
 
 tags:
   - openenv
@@ -13,6 +15,8 @@ tags:
   - database
   - performance
   - optimization
+  - duckdb
+  - execution-grounded
   - llm-agent
 
 language: python
@@ -31,6 +35,7 @@ observation_space:
     step_count: integer
     max_steps: integer
     issues_found_so_far: array
+    last_execution: object
 
 action_space:
   type: object
@@ -46,36 +51,52 @@ reward:
   min: 0.0
   max: 1.0
   description: >
-    Composite score: issue detection (60%), optimized query quality (15%),
-    approval correctness (10%), summary quality (8%),
-    improvement estimate (4%), severity labels (3%).
+    Execution-grounded composite score:
+    Real Speedup (35%) — actual DuckDB timing ratio,
+    Result Correctness (20%) — both queries return identical data,
+    Issue Detection (25%) — keyword match vs ground truth,
+    Approval Correctness (8%), Summary Quality (7%), Severity Labels (5%).
 
 tasks:
   - id: task_1_basic_antipatterns
     name: "Basic SQL Anti-pattern Detection"
     difficulty: easy
     max_steps: 3
-    description: "Identify SELECT *, non-SARGable predicates, and implicit type casts that prevent index usage."
+    description: "SELECT *, CAST on filter column, YEAR() function — 3 classic anti-patterns on 500k rows"
 
-  - id: task_2_join_optimization
-    name: "N+1 Pattern & Join Optimization"
+  - id: task_2_correlated_subqueries
+    name: "N+1 Correlated Subquery Elimination"
     difficulty: medium
     max_steps: 4
-    description: "Detect correlated subqueries, missing join indexes, and inefficient sorting in complex queries."
+    description: "3 correlated subqueries causing ~10M row reads — rewrite to single aggregation JOIN"
 
-  - id: task_3_advanced_optimization
-    name: "Advanced Query & Window Function Audit"
+  - id: task_3_wildcard_scan
+    name: "Wildcard LIKE & Projection Optimization"
+    difficulty: medium-hard
+    max_steps: 4
+    description: "Leading-wildcard LIKE on 1M events, SELECT *, pre-filter push-down"
+
+  - id: task_4_implicit_join
+    name: "Implicit Cross Join & Scalar Subquery Elimination"
     difficulty: hard
     max_steps: 5
-    description: "Deep performance audit: JSONB index misses, CTE materialization, window function planning, lock contention, and implicit casts."
+    description: "Comma-syntax join risk + 2 correlated global aggregations — rewrite with CTE"
+
+  - id: task_5_window_functions
+    name: "Window Function & Full-Scan Audit"
+    difficulty: expert
+    max_steps: 5
+    description: "5 window functions over 1M unfiltered rows including a global RANK() sort"
 
 endpoints:
-  reset: POST /reset
-  step: POST /step
-  state: GET /state
-  tasks: GET /tasks
-  grader: POST /grader
-  baseline: POST /baseline
+  reset:       POST /reset
+  step:        POST /step
+  state:       GET  /state
+  tasks:       GET  /tasks
+  grader:      POST /grader
+  baseline:    POST /baseline
+  execute:     POST /execute
+  leaderboard: GET  /leaderboard
 
 deployment:
   platform: huggingface-spaces
