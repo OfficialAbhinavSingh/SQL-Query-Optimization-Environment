@@ -2,7 +2,7 @@
 title: SQL Query Optimization Env
 emoji: 🗄️
 colorFrom: indigo
-colorTo: cyan
+colorTo: blue
 sdk: docker
 app_file: server/app.py
 pinned: false
