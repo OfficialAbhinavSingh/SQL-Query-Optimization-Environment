@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-04-24T16:59:41Z",
+  "fallback": {
+    "task_1_basic_antipatterns": {
+      "task_name": "Basic SQL Anti-pattern Detection",
+      "difficulty": "easy",
+      "score": 0.68,
+      "speedup": 3.27,
+      "correct": false,
+      "steps": 1,
+      "policy": "fallback"
+    },
+    "task_2_correlated_subqueries": {
+      "task_name": "N+1 Correlated Subquery Elimination",
+      "difficulty": "medium",
+      "score": 0.69,
+      "speedup": 0.98,
+      "correct": true,
+      "steps": 1,
+      "policy": "fallback"
+    },
+    "task_3_wildcard_scan": {
+      "task_name": "Wildcard LIKE & Projection Optimization",
+      "difficulty": "medium-hard",
+      "score": 0.75,
+      "speedup": 5.52,
+      "correct": false,
+      "steps": 1,
+      "policy": "fallback"
+    },
+    "task_4_implicit_join": {
+      "task_name": "Implicit Cross Join & Scalar Subquery Elimination",
+      "difficulty": "hard",
+      "score": 0.65,
+      "speedup": 0.87,
+      "correct": true,
+      "steps": 1,
+      "policy": "fallback"
+    },
+    "task_5_window_functions": {
+      "task_name": "Window Function & Full-Scan Audit",
+      "difficulty": "expert",
+      "score": 0.68,
+      "speedup": 3.97,
+      "correct": false,
+      "steps": 1,
+      "policy": "fallback"
+    }
+  },
+  "llm": null
+}
