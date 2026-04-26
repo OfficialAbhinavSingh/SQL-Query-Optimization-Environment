@@ -25,7 +25,7 @@ Usage:
   python train.py
 
 For Colab / HF Spaces:
-  See train_colab.ipynb for the notebook version with plots.
+  See train_colab.ipynb for a rerunnable notebook with plots.
 """
 
 import json

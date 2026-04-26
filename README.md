@@ -45,6 +45,7 @@ tags:
 | [docs/design.md](docs/design.md) | Reward design, limitations, anti-gaming |
 | [docs/results.md](docs/results.md) | Frozen baselines and how to reproduce |
 | [docs/training.md](docs/training.md) | GRPO / `train.py` hyperparameters |
+| [train_colab.ipynb](train_colab.ipynb) | One-click Colab rerun for judges |
 | [scripts/ablation.py](scripts/ablation.py) | Reward-component ablation (`--quick` for CI) |
 | [scripts/export_replay.py](scripts/export_replay.py) | Regenerate offline `runs/demo_fallback/replay.html` |
 
