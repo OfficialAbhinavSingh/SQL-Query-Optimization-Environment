@@ -59,7 +59,7 @@ FALLBACK_SOLUTIONS: Dict[str, Dict[str, Any]] = {
              "severity": "high", "fix": "created_at >= DATE '2024-01-01' AND created_at < DATE '2025-01-01'"},
         ],
         "optimized_query": (
-            "SELECT id, customer_id, status, total, created_at\n"
+            "SELECT id, customer_id, product_id, status, total, created_at\n"
             "FROM orders\n"
             "WHERE customer_id = 5000\n"
             "  AND created_at >= DATE '2024-01-01'\n"
@@ -129,36 +129,34 @@ FALLBACK_SOLUTIONS: Dict[str, Dict[str, Any]] = {
     "task_3_wildcard_scan": {
         "suggestions": [
             {"issue_type": "leading_wildcard_like", "line": 6,
-             "description": "LIKE '%purchase%' disables zone-map pruning — forces full 1M row scan.",
-             "severity": "critical", "fix": "Use exact equality: event_type = 'purchase'"},
+             "description": "LIKE '%purchase%' and '%buy%' are leading-wildcard patterns that disable zone-map pruning on 1M rows.",
+             "severity": "critical", "fix": "Replace with exact equality where possible"},
             {"issue_type": "or_expands_to_full_scan", "line": 7,
-             "description": "OR with wildcard LIKE '%buy%' is redundant — no 'buy' events exist in schema.",
-             "severity": "high", "fix": "Remove OR clause; use IN ('purchase', ...) for multi-type"},
+             "description": "OR session_id LIKE 'sess_%' matches ALL 1M rows (every session_id starts with 'sess_'), making the other OR conditions redundant. The WHERE is effectively a no-op.",
+             "severity": "high", "fix": "Recognize session_id LIKE 'sess_%' covers all rows; simplify or remove WHERE clause entirely"},
             {"issue_type": "select_star_large_table", "line": 2,
-             "description": "SELECT * on 1M rows transfers all columns unnecessarily.",
-             "severity": "high", "fix": "SELECT id, user_id, event_type, occurred_at"},
+             "description": "SELECT * on 1M rows fetches all columns plus two computed columns before the WHERE is evaluated.",
+             "severity": "high", "fix": "SELECT id, user_id, session_id, event_type, occurred_at — explicit projection"},
             {"issue_type": "pre_filter_computed_columns", "line": 3,
-             "description": "Derived columns (CAST, UPPER) computed on all 1M rows before WHERE.",
-             "severity": "medium", "fix": "Apply WHERE first via CTE, then compute derived columns"},
+             "description": "CAST(id AS VARCHAR) || '_' || event_type and UPPER(event_type) computed for all 1M rows before WHERE.",
+             "severity": "medium", "fix": "Compute derived columns after WHERE filtering (or in final SELECT)"},
         ],
         "optimized_query": (
-            "WITH filtered AS (\n"
-            "    SELECT id, user_id, session_id, event_type, occurred_at\n"
-            "    FROM events\n"
-            "    WHERE event_type = 'purchase'\n"
-            ")\n"
+            "-- session_id LIKE 'sess_%%' matches ALL rows, so original WHERE = full scan anyway.\n"
+            "-- Remove the redundant OR conditions; keep explicit column projection.\n"
             "SELECT\n"
             "    id, user_id, session_id, event_type, occurred_at,\n"
             "    CAST(id AS VARCHAR) || '_' || event_type AS event_key,\n"
             "    UPPER(event_type) AS event_type_upper\n"
-            "FROM filtered;"
+            "FROM events;"
         ),
         "summary": (
-            "Leading-wildcard LIKE patterns on 1M events force full column scans. "
-            "Exact equality (event_type = 'purchase') enables zone-map pruning, "
-            "reducing the dataset to ~167k rows before computed columns are evaluated."
+            "The WHERE clause is a logical no-op: session_id LIKE 'sess_%' matches ALL 1M rows "
+            "(every session starts with 'sess_'), making the event_type LIKE conditions redundant. "
+            "Removing the redundant wildcard evaluations eliminates three LIKE scans per row. "
+            "SELECT * replaced with explicit columns to reduce column I/O bandwidth."
         ),
-        "estimated_improvement": "4-8x faster — exact match + filter pushdown on 1M rows",
+        "estimated_improvement": "1.5-3x faster — eliminates three LIKE evaluations per row; no filter selectivity possible",
         "approved": False,
     },
 
@@ -209,45 +207,44 @@ FALLBACK_SOLUTIONS: Dict[str, Dict[str, Any]] = {
     "task_5_window_functions": {
         "suggestions": [
             {"issue_type": "no_pre_filter", "line": 11,
-             "description": "No WHERE clause — all 5 window functions run over all 1M rows.",
-             "severity": "critical", "fix": "Filter to relevant event_types in a CTE first"},
+             "description": "No WHERE clause: all 5 window functions computed over the entire 1M row events table. Window functions partition and sort the full dataset.",
+             "severity": "critical", "fix": "Adding a WHERE filter changes window function semantics (partitions include fewer rows), so instead optimize by removing expensive global RANK"},
             {"issue_type": "global_rank_no_partition", "line": 8,
-             "description": "RANK() OVER (ORDER BY occurred_at) sorts all 1M rows globally — most expensive op.",
-             "severity": "critical", "fix": "Remove or replace with per-user ROW_NUMBER()"},
+             "description": "RANK() OVER (ORDER BY occurred_at DESC) with no PARTITION sorts all 1M rows globally — the single most expensive operation in this query.",
+             "severity": "critical", "fix": "Remove RANK() OVER (ORDER BY occurred_at DESC) — it sorts 1M rows and provides marginal analytical value"},
             {"issue_type": "redundant_window_functions", "line": 5,
-             "description": "5 window functions with overlapping PARTITION BY — multiple passes.",
-             "severity": "high", "fix": "Consolidate into fewer OVER() clauses where possible"},
+             "description": "5 separate OVER() clauses, two sharing PARTITION BY user_id. Each is a distinct sort/hash-aggregate pass over all 1M rows.",
+             "severity": "high", "fix": "Merge compatible windows; DuckDB can share passes for identical PARTITION BY"},
             {"issue_type": "count_vs_conditional_sum", "line": 9,
-             "description": "SUM(CASE WHEN event_type='purchase') can be COUNT(*) FILTER (WHERE ...).",
+             "description": "SUM(CASE WHEN event_type='purchase' THEN 1 ELSE 0 END) is equivalent to but slower than COUNT(*) FILTER (WHERE event_type='purchase').",
              "severity": "medium", "fix": "COUNT(*) FILTER (WHERE event_type = 'purchase') OVER (PARTITION BY user_id)"},
             {"issue_type": "select_all_unfiltered", "line": 1,
-             "description": "Selecting all columns from 1M rows — project only needed columns.",
-             "severity": "medium", "fix": "SELECT user_id, event_type, occurred_at + window columns"},
+             "description": "The original query selects specific columns, but all 1M rows with no selectivity.",
+             "severity": "medium", "fix": "Preserve column projection; focus optimizations on window function cost"},
         ],
         "optimized_query": (
-            "WITH base AS (\n"
-            "    SELECT user_id, event_type, occurred_at\n"
-            "    FROM events\n"
-            "    WHERE event_type IN ('purchase', 'view', 'click')\n"
-            ")\n"
+            "-- Remove global RANK() (sorts all 1M rows); replace SUM(CASE WHEN) with COUNT FILTER.\n"
+            "-- Window functions must operate over the same dataset to preserve correct partition counts.\n"
             "SELECT\n"
             "    user_id,\n"
             "    event_type,\n"
             "    occurred_at,\n"
-            "    COUNT(*) OVER (PARTITION BY user_id)                                    AS total_user_events,\n"
-            "    COUNT(*) OVER (PARTITION BY user_id, event_type)                        AS type_count,\n"
-            "    ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY occurred_at DESC)      AS recency_rank,\n"
+            "    COUNT(*) OVER (PARTITION BY user_id)                                AS total_user_events,\n"
+            "    COUNT(*) OVER (PARTITION BY user_id, event_type)                   AS type_count,\n"
+            "    ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY occurred_at DESC) AS recency_rank,\n"
             "    COUNT(*) FILTER (WHERE event_type = 'purchase')\n"
-            "        OVER (PARTITION BY user_id)                                          AS user_purchases\n"
-            "FROM base;"
+            "        OVER (PARTITION BY user_id)                                    AS user_purchases\n"
+            "FROM events;"
         ),
         "summary": (
-            "Five window functions over 1M unfiltered rows causes 5 full sort/hash passes. "
-            "The global RANK() sorts all 1M rows globally — the single most expensive operation. "
-            "Pre-filtering to relevant event types in a CTE reduces the dataset to ~500k rows "
-            "and removing the global RANK eliminates the costliest sort."
+            "Five window functions over all 1M events with no pre-filtering causes 5 full sort/hash passes. "
+            "The global RANK() OVER (ORDER BY occurred_at DESC) sorts all 1M rows globally — the single most expensive operation. "
+            "Removing RANK() eliminates the global sort pass entirely. "
+            "Replacing SUM(CASE WHEN event_type='purchase' THEN 1 ELSE 0 END) with COUNT(*) FILTER (WHERE event_type='purchase') "
+            "is more concise and allows better optimizer hints. The dataset must remain unfiltered "
+            "to preserve correct window partition counts across all user/event_type combinations."
         ),
-        "estimated_improvement": "5-12x faster — filter-first + remove global RANK()",
+        "estimated_improvement": "3-6x faster — removing global RANK() eliminates the full 1M-row global sort pass",
         "approved": False,
     },
 }
