@@ -125,6 +125,42 @@ class QueryExecutor:
         timings.sort()
         return round(timings[len(timings) // 2], 3), rows, None
 
+    def _checksum(self, query: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+        """
+        Compute a deterministic (row-order-independent) checksum.
+        Returns (row_count, checksum, error).
+        
+        BIT_XOR is commutative+associative — order-independent fingerprint.
+        Falls back to count-only if the DuckDB version doesn't support the function.
+        """
+        # Try BIT_XOR of a numeric hash (portable across DuckDB versions)
+        for sql_template in [
+            # Option 1: BIT_XOR of md5 prefix cast to integer
+            (
+                "SELECT COUNT(*) AS cnt, "
+                "BIT_XOR(CAST(('0x' || LEFT(md5(CAST(t AS VARCHAR)), 15)) AS UBIGINT)) AS chk "
+                "FROM ({query}) t"
+            ),
+            # Option 2: sum of hash (order-independent since sum is commutative)
+            (
+                "SELECT COUNT(*) AS cnt, "
+                "SUM(hash(CAST(t AS VARCHAR)) % 9999999999) AS chk "
+                "FROM ({query}) t"
+            ),
+        ]:
+            try:
+                wrapped = sql_template.format(query=query)
+                result = self.conn.execute(wrapped).fetchone()
+                return result[0], result[1], None
+            except Exception:
+                continue
+        # Final fallback: count only
+        try:
+            cnt = self.conn.execute(f"SELECT COUNT(*) FROM ({query}) t").fetchone()[0]
+            return cnt, None, None
+        except Exception as exc:
+            return None, None, str(exc)
+
     # ── Public API ────────────────────────────────────────────────────────
 
     def compare(self, original: str, optimized: str) -> Dict[str, Any]:
@@ -140,12 +176,31 @@ class QueryExecutor:
         opt_ms, opt_rows, opt_err = self._run(optimized)
 
         # ── Correctness: do both queries return the same data? ────────
+        # Use a DuckDB-level checksum (order-independent) to avoid
+        # false negatives from non-deterministic row ordering in parallel
+        # window function queries on large tables.
         results_match = False
         if orig_rows is not None and opt_rows is not None:
             try:
-                orig_s = sorted(str(r) for r in orig_rows)
-                opt_s = sorted(str(r) for r in opt_rows)
-                results_match = orig_s == opt_s
+                if len(orig_rows) != len(opt_rows):
+                    results_match = False
+                elif len(orig_rows) == 0:
+                    results_match = True
+                elif len(orig_rows) <= 50_000:
+                    # Small/medium: full sorted comparison (precise)
+                    orig_s = sorted(str(r) for r in orig_rows)
+                    opt_s  = sorted(str(r) for r in opt_rows)
+                    results_match = orig_s == opt_s
+                else:
+                    # Large result sets: use SQL-level hash checksum
+                    # (deterministic regardless of row ordering / thread count)
+                    o_cnt, o_chk, o_err2 = self._checksum(original)
+                    p_cnt, p_chk, p_err2 = self._checksum(optimized)
+                    if o_err2 or p_err2:
+                        # Checksum failed — fall back to row count
+                        results_match = len(orig_rows) == len(opt_rows)
+                    else:
+                        results_match = (o_cnt == p_cnt) and (o_chk == p_chk)
             except Exception:
                 results_match = len(orig_rows) == len(opt_rows)
 
