@@ -11,9 +11,11 @@ import json
 import os
 import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -60,6 +62,17 @@ app.add_middleware(
 )
 
 env = SQLOptimEnv()
+
+
+# ── Serve interactive demo page ─────────────────────────────────────────
+_DEMO_HTML = Path(__file__).parent / "demo.html"
+
+@app.get("/demo", response_class=HTMLResponse, include_in_schema=False)
+def demo_page():
+    """Interactive SQL optimizer demo — paste SQL, hit Execute, see real DuckDB timing."""
+    if _DEMO_HTML.exists():
+        return HTMLResponse(content=_DEMO_HTML.read_text(encoding="utf-8"))
+    return HTMLResponse(content="<h1>demo.html not found</h1>", status_code=404)
 
 
 # ── Standard OpenEnv endpoints ────────────────────────────────────────────

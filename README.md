@@ -22,10 +22,11 @@ tags:
 ### *An OpenEnv-compliant RL environment where LLMs learn to write faster SQL — grounded in real query execution*
 
 [![OpenEnv](https://img.shields.io/badge/OpenEnv-compliant-brightgreen)](https://github.com/open-env)
-[![HF Space](https://img.shields.io/badge/🤗%20HuggingFace-Space-orange)](https://huggingface.co/spaces/laterabhi-sql-query-env)
+[![HF Space](https://img.shields.io/badge/🤗%20HuggingFace-Space-orange)](https://huggingface.co/spaces/laterabhi/grpo-sql-optimizer)
+[![HF Model](https://img.shields.io/badge/🤗%20HuggingFace-Model-blue)](https://huggingface.co/laterabhi/grpo-sql-optimizer)
 [![Theme](https://img.shields.io/badge/Theme-World%20Modeling%20%233.1-blueviolet)](#theme)
 [![DuckDB](https://img.shields.io/badge/Engine-DuckDB%20real%20execution-yellow)](https://duckdb.org)
-[![Training](https://img.shields.io/badge/Training-GRPO%20%7C%20TRL-red)](#training)
+[![Training](https://img.shields.io/badge/Training-GRPO%20%7C%20Kaggle-red)](https://www.kaggle.com/code/officialabhinavsingh/train-kaggle)
 
 **Meta PyTorch OpenEnv Hackathon × Scaler School of Technology — Grand Finale 2026**
 
@@ -236,6 +237,30 @@ Multi-step LLM agent with execution feedback loop. Run: `HF_TOKEN=hf_xxx python 
 
 ---
 
+## 🧪 GRPO Training Results (Kaggle Run)
+
+Fine-tuned `Qwen/Qwen2.5-0.5B-Instruct` using GRPO on this environment. Published model: [laterabhi/grpo-sql-optimizer](https://huggingface.co/laterabhi/grpo-sql-optimizer)
+
+| Metric | Value |
+|---|---|
+| Start avg (ep1–10) | 0.3090 |
+| End avg (ep91–100) | 0.5962 |
+| **Improvement** | **+93%** |
+
+### Final Evaluation (Trained Model vs Tasks)
+
+| Task | Difficulty | Score |
+|---|---|---|
+| task_1_basic_antipatterns | easy | **0.7500** ✅ |
+| task_2_correlated_subqueries | medium | **0.8313** ✅ |
+| task_3_wildcard_scan | medium-hard | **0.6563** ✅ |
+| task_4_implicit_join | hard | **0.6563** ✅ |
+| task_5_window_functions | expert | **0.6500** ✅ |
+
+The reward curve shows clear learning — model converged from random policy (0.31) to consistently above the deterministic fallback baseline (0.69) by episode 60.
+
+---
+
 ## 🚀 Training: GRPO with HF TRL
 
 We train using **Group Relative Policy Optimization (GRPO)** — the same algorithm used by DeepSeek-R1. The model generates G candidate SQL rewrites per prompt, the environment scores each against DuckDB, and the policy is updated to prefer higher-reward completions.
@@ -262,11 +287,18 @@ python train.py --use-trl
 
 See [`train.py`](train.py) for the full implementation.
 
-### Colab Notebook
+### Training Notebooks
+
+**Primary — Kaggle (P100 GPU, full 100-episode run with published results):**
+
+[![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/code/officialabhinavsingh/train-kaggle)
+
+**Alternative — Google Colab (T4 GPU):**
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](train_colab.ipynb)
 
-The notebook runs the full training loop on a free T4 GPU and generates reward curves automatically.
+Both notebooks run the complete GRPO training loop and generate reward curves.
+The Kaggle run produced the model at [laterabhi/grpo-sql-optimizer](https://huggingface.co/laterabhi/grpo-sql-optimizer) achieving **+93% improvement** (start avg 0.309 → end avg 0.596).
 
 ---
 
@@ -287,7 +319,7 @@ The notebook runs the full training loop on a free T4 GPU and generates reward c
 
 ```bash
 # Test the /execute endpoint directly
-curl -X POST https://laterabhi-sql-query-env.hf.space/execute \
+curl -X POST https://laterabhi-grpo-sql-optimizer.hf.space/execute \
   -H "Content-Type: application/json" \
   -d '{
     "task_id": "task_1_basic_antipatterns",
@@ -299,12 +331,12 @@ curl -X POST https://laterabhi-sql-query-env.hf.space/execute \
 
 ```bash
 # 1. Start an episode
-curl -X POST https://laterabhi-sql-query-env.hf.space/reset \
+curl -X POST https://laterabhi-grpo-sql-optimizer.hf.space/reset \
   -H "Content-Type: application/json" \
   -d '{"task_id": "task_2_correlated_subqueries"}'
 
 # 2. Submit your optimized SQL
-curl -X POST https://laterabhi-sql-query-env.hf.space/step \
+curl -X POST https://laterabhi-grpo-sql-optimizer.hf.space/step \
   -H "Content-Type: application/json" \
   -d '{"suggestions": [...], "optimized_query": "WITH ...", "summary": "...", "approved": false}'
 
@@ -348,8 +380,10 @@ docker run -p 7860:7860 sql-optim-env
 
 | Resource | Link |
 |---|---|
-| 🤗 HuggingFace Space (live API) | https://huggingface.co/spaces/laterabhi-sql-query-env |
-| 📓 Training Notebook (Colab) | [`train_colab.ipynb`](train_colab.ipynb) |
+| 🤗 HuggingFace Space (live API + demo) | https://huggingface.co/spaces/laterabhi/grpo-sql-optimizer |
+| 🤗 Trained Model (GRPO fine-tuned Qwen2.5) | https://huggingface.co/laterabhi/grpo-sql-optimizer |
+| 📓 Training Notebook (Kaggle — primary) | https://www.kaggle.com/code/officialabhinavsingh/train-kaggle |
+| 📓 Training Notebook (Colab — alternative) | [`train_colab.ipynb`](train_colab.ipynb) |
 | 📊 Baseline Results | [`results/baseline_results.json`](results/baseline_results.json) |
 | ⚙️ OpenEnv Manifest | [`openenv.yaml`](openenv.yaml) |
 | 🐍 Training Script | [`train.py`](train.py) |

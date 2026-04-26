@@ -10,3 +10,11 @@ venv/
 *.log
 .DS_Store
 Thumbs.db
+
+# Model checkpoints (large files — use HuggingFace Hub instead)
+checkpoints/
+results/training_curves.png
+results/training_history.json
+
+# Jupyter
+.ipynb_checkpoints/
