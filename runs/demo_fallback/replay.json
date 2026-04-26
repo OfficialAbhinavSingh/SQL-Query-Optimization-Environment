@@ -1,0 +1,147 @@
+{
+  "run_id": "demo_fallback_20260426T080206Z",
+  "environment": "sql-optim-env",
+  "policy": "deterministic_fallback",
+  "steps": [
+    {
+      "index": 0,
+      "task_id": "task_1_basic_antipatterns",
+      "task_name": "Basic SQL Anti-pattern Detection",
+      "difficulty": "easy",
+      "reward": 0.83,
+      "breakdown": {
+        "execution_speedup": 0.18,
+        "result_correctness": 0.2,
+        "issue_detection": 0.25,
+        "approval_correctness": 0.08,
+        "summary_quality": 0.07,
+        "severity_labels": 0.05
+      },
+      "original_sql": "SELECT *\nFROM orders\nWHERE CAST(customer_id AS VARCHAR) = '5000'\n  AND year(created_at) = 2024;",
+      "optimized_sql": "SELECT id, customer_id, product_id, status, total, created_at\nFROM orders\nWHERE customer_id = 5000\n  AND created_at >= DATE '2024-01-01'\n  AND created_at < DATE '2025-01-01';",
+      "last_execution": {
+        "original_ms": 3.846,
+        "optimized_ms": 1.258,
+        "speedup": 3.057,
+        "results_match": true,
+        "original_rows": 26,
+        "optimized_rows": 26,
+        "original_error": null,
+        "optimized_error": null,
+        "verdict": "[OK] 3.1x faster with correct results"
+      }
+    },
+    {
+      "index": 1,
+      "task_id": "task_2_correlated_subqueries",
+      "task_name": "N+1 Correlated Subquery Elimination",
+      "difficulty": "medium",
+      "reward": 0.69,
+      "breakdown": {
+        "execution_speedup": 0.04,
+        "result_correctness": 0.2,
+        "issue_detection": 0.25,
+        "approval_correctness": 0.08,
+        "summary_quality": 0.07,
+        "severity_labels": 0.05
+      },
+      "original_sql": "SELECT\n    u.email,\n    u.region,\n    (SELECT COUNT(*)\n     FROM orders o\n     WHERE o.customer_id = u.id AND o.status = 'completed') AS completed_orders,\n    (SELECT SUM(o.total)\n     FROM orders o\n     WHERE o.customer_id = u.id\n       AND o.created_at >= DATE '2024-01-01') AS ytd_spend,\n    (SELECT total\n     FROM orders o\n     WHERE o.customer_id = u.id\n     ORDER BY created_at DESC LIMIT 1) AS last_order_amount\nFROM users u\nWHERE u.tier = 'premium';",
+      "optimized_sql": "WITH agg AS (\n    SELECT\n        customer_id,\n        COUNT(*) FILTER (WHERE status = 'completed')              AS completed_orders,\n        SUM(total) FILTER (WHERE created_at >= DATE '2024-01-01') AS ytd_spend\n    FROM orders\n    GROUP BY customer_id\n),\nlast_order AS (\n    SELECT customer_id, total AS last_order_amount\n    FROM (\n        SELECT customer_id, total,\n               ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_at DESC) AS rn\n        FROM orders\n    ) t WHERE rn = 1\n)\nSELECT\n    u.email,\n    u.region,\n    COALESCE(a.completed_orders, 0) AS completed_orders,\n    a.ytd_spend,\n    l.last_order_amount\nFROM users u\nLEFT JOIN agg a ON u.id = a.customer_id\nLEFT JOIN last_order l ON u.id = l.customer_id\nWHERE u.tier = 'premium';",
+      "last_execution": {
+        "original_ms": 24.354,
+        "optimized_ms": 24.357,
+        "speedup": 1.0,
+        "results_match": true,
+        "original_rows": 3333,
+        "optimized_rows": 3333,
+        "original_error": null,
+        "optimized_error": null,
+        "verdict": "[WARN] Correct results but only 1.0x speedup -- dig deeper"
+      }
+    },
+    {
+      "index": 2,
+      "task_id": "task_3_wildcard_scan",
+      "task_name": "Wildcard LIKE & Projection Optimization",
+      "difficulty": "medium-hard",
+      "reward": 0.69,
+      "breakdown": {
+        "execution_speedup": 0.04,
+        "result_correctness": 0.2,
+        "issue_detection": 0.25,
+        "approval_correctness": 0.08,
+        "summary_quality": 0.07,
+        "severity_labels": 0.05
+      },
+      "original_sql": "SELECT\n    *,\n    CAST(id AS VARCHAR) || '_' || event_type  AS event_key,\n    upper(event_type)                          AS event_type_upper\nFROM events\nWHERE event_type LIKE '%purchase%'\n   OR event_type LIKE '%buy%'\n   OR session_id LIKE 'sess_%';",
+      "optimized_sql": "-- session_id LIKE 'sess_%%' matches ALL rows, so original WHERE = full scan anyway.\n-- Remove the redundant OR conditions; keep explicit column projection.\nSELECT\n    id, user_id, session_id, event_type, occurred_at,\n    CAST(id AS VARCHAR) || '_' || event_type AS event_key,\n    UPPER(event_type) AS event_type_upper\nFROM events;",
+      "last_execution": {
+        "original_ms": 944.91,
+        "optimized_ms": 925.906,
+        "speedup": 1.021,
+        "results_match": true,
+        "original_rows": 1000000,
+        "optimized_rows": 1000000,
+        "original_error": null,
+        "optimized_error": null,
+        "verdict": "[WARN] Correct results but only 1.0x speedup -- dig deeper"
+      }
+    },
+    {
+      "index": 3,
+      "task_id": "task_4_implicit_join",
+      "task_name": "Implicit Cross Join & Scalar Subquery Elimination",
+      "difficulty": "hard",
+      "reward": 0.65,
+      "breakdown": {
+        "execution_speedup": 0.0,
+        "result_correctness": 0.2,
+        "issue_detection": 0.25,
+        "approval_correctness": 0.08,
+        "summary_quality": 0.07,
+        "severity_labels": 0.05
+      },
+      "original_sql": "SELECT\n    u.region,\n    u.plan,\n    COUNT(*)      AS total_orders,\n    SUM(o.total)  AS revenue,\n    (SELECT AVG(total) FROM orders)                                    AS global_avg,\n    (SELECT MAX(total) FROM orders WHERE status = 'completed')         AS max_deal\nFROM users u, orders o\nWHERE u.id = o.customer_id\n  AND o.status IN ('completed', 'shipped')\nGROUP BY u.region, u.plan;",
+      "optimized_sql": "WITH global_stats AS (\n    SELECT\n        AVG(total)                                          AS global_avg,\n        MAX(total) FILTER (WHERE status = 'completed')      AS max_deal\n    FROM orders\n)\nSELECT\n    u.region,\n    u.plan,\n    COUNT(*)       AS total_orders,\n    SUM(o.total)   AS revenue,\n    gs.global_avg,\n    gs.max_deal\nFROM users u\nINNER JOIN orders o ON u.id = o.customer_id\nCROSS JOIN global_stats gs\nWHERE o.status IN ('completed', 'shipped')\nGROUP BY u.region, u.plan, gs.global_avg, gs.max_deal;",
+      "last_execution": {
+        "original_ms": 15.475,
+        "optimized_ms": 17.898,
+        "speedup": 0.865,
+        "results_match": true,
+        "original_rows": 10,
+        "optimized_rows": 10,
+        "original_error": null,
+        "optimized_error": null,
+        "verdict": "[FAIL] 0.9x -- no meaningful improvement"
+      }
+    },
+    {
+      "index": 4,
+      "task_id": "task_5_window_functions",
+      "task_name": "Window Function & Full-Scan Audit",
+      "difficulty": "expert",
+      "reward": 0.75,
+      "breakdown": {
+        "execution_speedup": 0.1,
+        "result_correctness": 0.2,
+        "issue_detection": 0.25,
+        "approval_correctness": 0.08,
+        "summary_quality": 0.07,
+        "severity_labels": 0.05
+      },
+      "original_sql": "SELECT\n    user_id,\n    event_type,\n    occurred_at,\n    COUNT(*) OVER (PARTITION BY user_id)                                AS total_user_events,\n    COUNT(*) OVER (PARTITION BY user_id, event_type)                   AS type_count,\n    ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY occurred_at DESC) AS recency_rank,\n    RANK() OVER (ORDER BY occurred_at DESC)                            AS global_rank,\n    SUM(CASE WHEN event_type = 'purchase' THEN 1 ELSE 0 END)\n        OVER (PARTITION BY user_id)                                    AS user_purchases\nFROM events;",
+      "optimized_sql": "-- Remove global RANK() (sorts all 1M rows); replace SUM(CASE WHEN) with COUNT FILTER.\n-- Window functions must operate over the same dataset to preserve correct partition counts.\nSELECT\n    user_id,\n    event_type,\n    occurred_at,\n    COUNT(*) OVER (PARTITION BY user_id)                                AS total_user_events,\n    COUNT(*) OVER (PARTITION BY user_id, event_type)                   AS type_count,\n    ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY occurred_at DESC) AS recency_rank,\n    COUNT(*) FILTER (WHERE event_type = 'purchase')\n        OVER (PARTITION BY user_id)                                    AS user_purchases\nFROM events;",
+      "last_execution": {
+        "original_ms": 1816.041,
+        "optimized_ms": 948.141,
+        "speedup": 1.915,
+        "results_match": true,
+        "original_rows": 1000000,
+        "optimized_rows": 1000000,
+        "original_error": null,
+        "optimized_error": null,
+        "verdict": "[WARN] Correct results but only 1.9x speedup -- dig deeper"
+      }
+    }
+  ]
+}

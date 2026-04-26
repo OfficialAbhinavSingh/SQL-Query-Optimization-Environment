@@ -4,11 +4,11 @@ build-backend = "setuptools.backends.legacy:build"
 
 [project]
 name = "sql-optim-env"
-version = "1.0.0"
+version = "2.0.0"
 description = "OpenEnv-compliant RL environment for AI SQL query optimization agents."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = { text = "MIT" }
 keywords = ["openenv", "sql", "database", "optimization", "rl", "reinforcement-learning", "llm-agent"]
 
 dependencies = [
@@ -30,3 +30,7 @@ dev = ["pytest", "httpx"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

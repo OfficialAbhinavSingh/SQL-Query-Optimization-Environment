@@ -1,0 +1,44 @@
+{
+  "rows": [
+    {
+      "task_id": "task_1_basic_antipatterns",
+      "task_name": "Basic SQL Anti-pattern Detection",
+      "difficulty": "easy",
+      "before_score": 0.45,
+      "after_score": 0.83,
+      "delta": 0.38
+    },
+    {
+      "task_id": "task_2_correlated_subqueries",
+      "task_name": "N+1 Correlated Subquery Elimination",
+      "difficulty": "medium",
+      "before_score": 0.45,
+      "after_score": 0.69,
+      "delta": 0.24
+    },
+    {
+      "task_id": "task_3_wildcard_scan",
+      "task_name": "Wildcard LIKE & Projection Optimization",
+      "difficulty": "medium-hard",
+      "before_score": 0.45,
+      "after_score": 0.69,
+      "delta": 0.24
+    },
+    {
+      "task_id": "task_4_implicit_join",
+      "task_name": "Implicit Cross Join & Scalar Subquery Elimination",
+      "difficulty": "hard",
+      "before_score": 0.45,
+      "after_score": 0.69,
+      "delta": 0.24
+    },
+    {
+      "task_id": "task_5_window_functions",
+      "task_name": "Window Function & Full-Scan Audit",
+      "difficulty": "expert",
+      "before_score": 0.45,
+      "after_score": 0.75,
+      "delta": 0.3
+    }
+  ]
+}

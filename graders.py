@@ -11,12 +11,29 @@ Scoring breakdown (sums to 1.0):
   Approval Correctness       8%   — correctly flags query as bad?
   Summary Quality            7%   — is the written analysis thorough?
   Severity Labels            5%   — are severity values present?
+
+Optional ``GradeMask`` (keyword arg ``mask=``) zeroes components for ablations;
+production calls omit ``mask`` (full scoring, including the 0.02 minimum when
+appropriate).
 """
 
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from executor import get_executor
 from models import Action, Reward
+
+
+@dataclass(frozen=True)
+class GradeMask:
+    """Toggle reward components (for ablations). All True = production grading."""
+
+    execution_speedup: bool = True
+    result_correctness: bool = True
+    issue_detection: bool = True
+    approval_correctness: bool = True
+    summary_quality: bool = True
+    severity_labels: bool = True
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -61,7 +78,12 @@ def _speedup_score(speedup: float, has_error: bool) -> float:
 
 # ── Main grader ───────────────────────────────────────────────────────────
 
-def grade(task_data: Dict[str, Any], action: Action) -> Reward:
+def grade(
+    task_data: Dict[str, Any],
+    action: Action,
+    *,
+    mask: Optional[GradeMask] = None,
+) -> Reward:
     original_query: str = task_data["sql_query"]
     optimized_query: str = (action.optimized_query or "").strip()
     ground_truth: List[Dict[str, Any]] = task_data["ground_truth_issues"]
@@ -141,16 +163,6 @@ def grade(task_data: Dict[str, Any], action: Action) -> Reward:
     )
     severity_sc = 0.05 if has_sev else 0.0
 
-    # ── Total ─────────────────────────────────────────────────────────
-    total = min(
-        max(speedup_sc + correctness_sc + detection_sc +
-            approval_sc + summary_sc + severity_sc, 0.0),
-        1.0,
-    )
-    total = round(total, 4)
-    if total == 0.0 and action.suggestions:
-        total = 0.02          # minimum signal for any submission
-
     breakdown = {
         "execution_speedup":    round(speedup_sc, 4),
         "result_correctness":   round(correctness_sc, 4),
@@ -159,6 +171,13 @@ def grade(task_data: Dict[str, Any], action: Action) -> Reward:
         "summary_quality":      round(summary_sc, 4),
         "severity_labels":      round(severity_sc, 4),
     }
+
+    # ── Total (optional component mask for ablations) ─────────────────
+    m = mask or GradeMask()
+    contrib = {k: (v if getattr(m, k) else 0.0) for k, v in breakdown.items()}
+    total = round(min(max(sum(contrib.values()), 0.0), 1.0), 4)
+    if mask is None and total == 0.0 and action.suggestions:
+        total = 0.02          # minimum signal for any submission (production only)
 
     feedback = "\n".join(
         exec_feedback

@@ -37,9 +37,26 @@ tags:
 
 ---
 
+## Documentation map
+
+| Doc | Purpose |
+|-----|---------|
+| [WHERE_TO_LOOK.md](WHERE_TO_LOOK.md) | Short file index for reviewers |
+| [docs/design.md](docs/design.md) | Reward design, limitations, anti-gaming |
+| [docs/results.md](docs/results.md) | Frozen baselines and how to reproduce |
+| [docs/training.md](docs/training.md) | GRPO / `train.py` hyperparameters |
+| [scripts/ablation.py](scripts/ablation.py) | Reward-component ablation (`--quick` for CI) |
+| [scripts/export_replay.py](scripts/export_replay.py) | Regenerate offline `runs/demo_fallback/replay.html` |
+
+**30-second judge path:** Open the [Hugging Face Space](https://huggingface.co/spaces/laterabhi/grpo-sql-optimizer) → call **GET /** then **POST /execute** with the sample body in the API Reference section → open [`runs/demo_fallback/replay.html`](runs/demo_fallback/replay.html) in a browser (offline step scrubber over five deterministic steps; regenerate with `python scripts/export_replay.py`).
+
+---
+
 ## 📌 About This Project
 
 SQL is the universal language of data — used by millions of engineers, analysts, and data scientists every day. Yet **LLMs consistently write SQL that is syntactically correct but computationally catastrophic at scale**. A query that returns results in milliseconds on a 1,000-row test table can bring a production system to its knees when faced with 500,000 orders or 1 million events.
+
+This project is **orthogonal to multi-agent governance / SOC-style environments**: here the **database engine** is the ground-truth critic for SQL—execution timing and result parity—not a second LLM overseer.
 
 The root cause? **LLMs have never been trained with feedback from a real database.** They've learned SQL from textbooks and Stack Overflow posts — not from watching their queries time out, studying execution plans, or experiencing the 50x slowdown of a correlated subquery on real data.
 
