@@ -287,18 +287,12 @@ python train.py --use-trl
 
 See [`train.py`](train.py) for the full implementation.
 
-### Training Notebooks
-
-**Primary — Kaggle (P100 GPU, full 100-episode run with published results):**
+### Training Notebook (Kaggle)
 
 [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/code/officialabhinavsingh/train-kaggle)
 
-**Alternative — Google Colab (T4 GPU):**
-
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](train_colab.ipynb)
-
-Both notebooks run the complete GRPO training loop and generate reward curves.
-The Kaggle run produced the model at [laterabhi/grpo-sql-optimizer](https://huggingface.co/laterabhi/grpo-sql-optimizer) achieving **+93% improvement** (start avg 0.309 → end avg 0.596).
+Full 100-episode GRPO training run on a Kaggle P100 GPU. Generates reward curves and before/after evaluation automatically.
+Produced the model at [laterabhi/grpo-sql-optimizer](https://huggingface.co/laterabhi/grpo-sql-optimizer) — **+93% improvement** (start avg 0.309 → end avg 0.596).
 
 ---
 
@@ -382,8 +376,7 @@ docker run -p 7860:7860 sql-optim-env
 |---|---|
 | 🤗 HuggingFace Space (live API + demo) | https://huggingface.co/spaces/laterabhi/grpo-sql-optimizer |
 | 🤗 Trained Model (GRPO fine-tuned Qwen2.5) | https://huggingface.co/laterabhi/grpo-sql-optimizer |
-| 📓 Training Notebook (Kaggle — primary) | https://www.kaggle.com/code/officialabhinavsingh/train-kaggle |
-| 📓 Training Notebook (Colab — alternative) | [`train_colab.ipynb`](train_colab.ipynb) |
+| 📓 Training Notebook (Kaggle) | https://www.kaggle.com/code/officialabhinavsingh/train-kaggle |
 | 📊 Baseline Results | [`results/baseline_results.json`](results/baseline_results.json) |
 | ⚙️ OpenEnv Manifest | [`openenv.yaml`](openenv.yaml) |
 | 🐍 Training Script | [`train.py`](train.py) |
