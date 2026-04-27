@@ -23,6 +23,7 @@ tags:
 
 [![deepwiki](https://deepwiki.com/OfficialAbhinavSingh/SQL-Query-Optimization-Environment/4-reward-and-grading-system)
 [![OpenEnv](https://img.shields.io/badge/OpenEnv-compliant-brightgreen)](https://github.com/open-env)
+[![DeepWiki](https://img.shields.io/badge/DeepWiki-Docs-3b82f6)](https://deepwiki.com/OfficialAbhinavSingh/SQL-Query-Optimization-Environment/4-reward-and-grading-system)
 [![HF Space](https://img.shields.io/badge/🤗%20HuggingFace-Space-orange)](https://huggingface.co/spaces/laterabhi/grpo-sql-optimizer)
 [![HF Model](https://img.shields.io/badge/🤗%20HuggingFace-Model-blue)](https://huggingface.co/laterabhi/grpo-sql-optimizer)
 [![Theme](https://img.shields.io/badge/Theme-World%20Modeling%20%233.1-blueviolet)](#theme)
@@ -392,8 +393,8 @@ curl -X POST https://laterabhi-grpo-sql-optimizer.hf.space/step \
 ## 🚀 Local Setup
 
 ```bash
-git clone https://github.com/OfficialAbhinavSingh/SQL-Query-Optimization-Environment-
-cd SQL-Query-Optimization-Environment-
+git clone https://github.com/OfficialAbhinavSingh/SQL-Query-Optimization-Environment
+cd SQL-Query-Optimization-Environment
 
 pip install -r requirements.txt
 
