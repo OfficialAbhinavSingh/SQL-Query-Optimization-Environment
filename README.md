@@ -21,7 +21,6 @@ tags:
 
 ### *Teaching LLMs to write fast SQL — grounded by a real database engine*
 
-[![deepwiki](https://deepwiki.com/OfficialAbhinavSingh/SQL-Query-Optimization-Environment/4-reward-and-grading-system)
 [![OpenEnv](https://img.shields.io/badge/OpenEnv-compliant-brightgreen)](https://github.com/open-env)
 [![DeepWiki](https://img.shields.io/badge/DeepWiki-Docs-3b82f6)](https://deepwiki.com/OfficialAbhinavSingh/SQL-Query-Optimization-Environment/4-reward-and-grading-system)
 [![HF Space](https://img.shields.io/badge/🤗%20HuggingFace-Space-orange)](https://huggingface.co/spaces/laterabhi/grpo-sql-optimizer)
