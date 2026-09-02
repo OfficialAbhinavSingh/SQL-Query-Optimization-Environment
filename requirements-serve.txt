@@ -1,0 +1,7 @@
+# What the environment server actually imports. Installed into the Space image.
+# Kept as its own file, and included by requirements.txt below, so the two
+# cannot drift: the image and the full install share one definition of these.
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.8.2
+duckdb>=0.10.0

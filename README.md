@@ -4,10 +4,12 @@ emoji: 🗄️
 colorFrom: indigo
 colorTo: blue
 sdk: docker
-app_file: server/app.py
+app_port: 7860
 pinned: false
 tags:
   - openenv
+  - agent-environment
+  - rl-environment
   - sql
   - world-modeling
   - llm-training

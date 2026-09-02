@@ -1,12 +1,16 @@
-fastapi==0.115.0
-uvicorn[standard]==0.30.6
-pydantic==2.8.2
+# Serving dependencies, shared with the Space image. One definition, included
+# rather than repeated.
+-r requirements-serve.txt
+
+# Client and evaluation scripts (inference.py, baseline_runner.py).
 openai>=1.0.0
 pyyaml==6.0.2
 requests==2.32.3
 openenv-core>=0.2.0
-duckdb>=0.10.0
-# Training dependencies
+
+# Training only (train.py, scripts/ablation.py). Deliberately absent from the
+# Space image: no served module imports any of these, and installing torch into
+# the image took minutes and gigabytes for code the server never runs.
 trl>=0.8.0
 transformers>=4.40.0
 torch>=2.1.0
